@@ -1,0 +1,157 @@
+---
+- hosts: all
+  gather_facts: false
+  connection: network_cli
+  become: yes
+  become_method: enable
+
+  collection
+   - cisco.asa
+  vars:
+   - group_object_name: ""
+   - object_name: ""
+   - object_ip: ""
+   - object_mask: ""
+   - public_ip_primary: ""
+   - public_ip_backup: ""
+   - AD01_name: ""
+   - AD01_IP: ""
+   - IT_VLAN: ""
+   - ansible_command_timeout: 1800
+   - password: "{{ password }}"
+   - no_log: true 
+  tasks:
+   - name: Create AD Service Ports
+     asa_command:
+      commands:
+       - config t
+       - object-group service AD-TCP tcp
+       - port-object eq 135
+       - port-object eq 137
+       - port-object eq 138
+       - port-object range 3268 3269
+       - port-object eq ldaps
+       - port-object eq netbios-ssn
+       - object-group service AD-TCP-UDP tcp-udp
+       - port-object range 1024 5000
+       - port-object eq 389
+       - port-object eq 445
+       - port-object eq 464
+       - port-object range 49152 65535
+       - port-object eq 636
+       - port-object eq 88
+       - port-object eq domain
+       - object-group service AD-UDP udp
+       - port-object eq netbios-dgm
+       - port-object eq netbios-ns
+       - port-object eq ntp
+       - exit
+   - name:  Create {{AD01}} object
+     asa_command:
+      commands:
+        - config t
+        - object network {{AD01_name}}
+        - host {{AD01_IP}}
+        - exit
+   - name: Create {{group_object_name}} Group Object
+     asa_command:
+      commands:
+        - config t
+        - object-group network {{group_object_name}}
+        - network-object {{object_ip}} {{object_mask}}
+        - network-object {{IT_VLAN}} {{object_mask}}
+        - exit
+   - name: BLOCK START
+     block:
+      - name: CREATE ACL
+        asa_command:
+         commands:
+           - config t
+           - access-list outside_cryptomap_50 extended permit ip object INTERNAL_NETWORK object-group {{group_object_name}}
+     rescue:
+      - name: RESCUE (ACL CREATION FAILED...TRYING IP OBJECT-GROUP)
+        asa_command:
+         commands:
+           - config t
+           - access-list outside_cryptomap_50 extended permit ip object-group INTERNAL_NETWORK object-group {{group_object_name}}
+   - name: Create Transform Set
+     asa_command:
+      commands:
+        - config t
+        - crypto ipsec ikev1 transform-set ARGENTIA_SET esp-aes-256
+   - name: Create ikev1 policy 
+     asa_command:
+      commands:
+        - config t
+        #- crypto ikev1 enable outside
+        - crypto ikev1 policy 50
+        - authentication pre-share 
+        - encryption aes-256 
+        - hash sha 
+        - group 14
+        - lifetime 86400
+        - exit
+   - name: Create Group Policy
+     ignore_errors: yes
+     asa_command:
+      commands:
+        - group-policy GroupPolicy_{{public_ip_primary}} internal
+        - group-policy GroupPolicy_{{public_ip_primary}} attributes
+        - vpn-tunnel-protocol ikev1
+        - exit
+        - group-policy GroupPolicy_{{public_ip_backup}} internal
+        - group-policy GroupPolicy_{{public_ip_backup}} attributes
+        - vpn-tunnel-protocol ikev1
+        - exit
+   - name: Create Tunnel Group
+     ignore_errors: yes
+     asa_command:
+      commands:
+        - tunnel-group {{public_ip_primary}} type ipsec-l2l
+        - tunnel-group {{public_ip_primary}} ipsec-attributes
+        - ikev1 pre-shared-key "{{ password }}"
+        - isakmp keepalive threshold 10 retry 2
+        - exit
+        - tunnel-group {{public_ip_primary}} general-attributes
+        - default-group-policy GroupPolicy_{{public_ip_primary}}
+        - exit
+        - tunnel-group {{public_ip_backup}} type ipsec-l2l
+        - tunnel-group {{public_ip_backup}} ipsec-attributes
+        - ikev1 pre-shared-key "{{ password }}"
+        - isakmp keepalive threshold 10 retry 2
+        - exit
+        - tunnel-group {{public_ip_backup}} general-attributes
+        - default-group-policy GroupPolicy_{{public_ip_backup}}
+        - exit
+   - name: Create crypto map
+     asa_command:
+      commands:
+        - crypto map outside_map 50 match address outside_cryptomap_50
+        - crypto map outside_map 50 set peer {{public_ip_primary}} {{public_ip_backup}}
+        - crypto map outside_map 50 set ikev1 transform-set SET
+        - crypto map outside_map 50 set security-association lifetime seconds 43200
+        - crypto map outside_map 50 set pfs group14
+        #- crypto map outside_map 50 interface outside
+   - name: NAT VPN Tunnel
+     asa_command:
+      commands:
+        - nat (any,outside) 50 source static INTERNAL_NETWORK INTERNAL_NETWORK destination static _INTERNAL _INTERNAL no-proxy-arp route-lookup
+        #- crypto ikev1 enable outside
+   - name: BLOCK START (Temporary allow ACL to Rogers INTERNAL)
+     block:
+      - name: CREATE ACL
+        asa_command:
+         commands:
+           - config t
+           - access-list inside_access_in extended permit tcp object INTERNAL_NETWORK object {{AD01_name}} object-group AD-TCP 
+           - access-list inside_access_in extended permit udp object INTERNAL_NETWORK object {{AD01_name}} object-group AD-UDP 
+           - access-list inside_access_in extended permit object-group TCPUDP object INTERNAL_NETWORK object {{AD01_name}} object-group AD-TCP-UDP 
+     rescue:
+      - name: RESCUE (ACL CREATION FAILED...TRYING IP OBJECT-GROUP)
+        asa_command:
+         commands:
+           - config t
+           - access-list inside_access_in extended permit tcp object-group INTERNAL_NETWORK object {{AD01_name}} object-group AD-TCP 
+           - access-list inside_access_in extended permit udp object-group INTERNAL_NETWORK object {{AD01_name}} object-group AD-UDP 
+           - access-list inside_access_in extended permit object-group TCPUDP object-group INTERNAL_NETWORK object {{AD01_name}} object-group AD-TCP-UDP 
+   
