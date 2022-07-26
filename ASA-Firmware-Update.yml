@@ -1,0 +1,110 @@
+---
+- hosts: all
+  gather_facts: false
+  #ignore_errors: yes
+  collections:
+   - cisco.asa
+  vars:
+   - asaImage: asa9-14
+   - asdmImage: asdm-714
+   - asaNewImage: asa9-16
+   - asdmNewImage: asdm-717
+   - asaImageURL: "HTTP URL"
+   - asdmImageURL: ""HTTP URL"
+   - asdmFileName: asdm-7171-152.bin
+   - asaFileName: asa9-16-2-14-lfbff-k8.SPA
+   - asaMD5: "599b91f71cabddcca272ae97d51d6a8b"
+   - asdmMD5: "40a57c4e98dc43899832ae20f5b090d4"
+   - prompt1: "Address or name of remote host"
+   - prompt2: "Source filename"
+   - prompt3: "Destination filename"
+   - ansible_command_timeout: 1800
+  tasks:
+   - name: Verify ASA Image
+     asa_command:
+      commands: 
+      - config t
+      - ssh timeout 20
+      - show version | grep asa
+      wait_for:   
+      - result[2] contains {{asaImage}}
+   - name: Verify ASDM Image
+     asa_command:
+      commands: 
+      - sh run | grep asdm image
+      wait_for: 
+      - result[0] contains {{asdmImage}}
+   - name: Download ASA Image
+     cli_command:
+      command: copy /noconfirm {{asaImageURL}} disk0:/{{asaFileName}}
+       #prompt:
+        #- '{{prompt1}}'
+        #- '{{prompt2}}'
+        #- '{{prompt3}}'
+       #answer:
+        #-.s3.ca-central-1.amazonaws.com
+        #- asa9-16-3-3-lfbff-k8.SPA
+        #- disk0:/asa9-16-3-3-lfbff-k8.SPA
+  #- name: Wait For Connection
+    #wait_for_connection:
+    #timeout: 900
+   - name: Verify ASA Checksum
+     asa_command:
+      commands: 
+      - verify /md5 disk0:/{{asaFileName}}
+      wait_for: 
+      - result[0] contains {{asaMD5}}
+   - name: Download ASDM Image
+     ansible.netcommon.cli_command:
+       command: copy /noconfirm {{asdmImageURL}} disk0:/{{asdmFileName}}
+       #prompt:
+        #- '{{prompt1}}'
+        #- '{{prompt2}}'
+        #- '{{prompt3}}'
+       #answer:
+        #- -central-1.amazonaws.com
+        #- asdm-7171-152.bin
+        #- disk0:/asdm-7171-152.bin
+   - name: Verify ASDM Checksum
+     asa_command:
+      commands: 
+      - verify /md5 disk0:/{{asdmFileName}}
+      wait_for: 
+      - result[0] contains {{asdmMD5}}
+   - name: Get Current ASA Boot Image
+     asa_command:
+      commands: 
+      - sh run boot
+     register: currentASAImage
+   - debug:
+       var: currentASAImage
+   - name: Set ASA/ASDM Boot Images
+     asa_command:
+      commands:
+      - config t
+      - no {{currentASAImage.stdout.0}}
+      - boot system disk0:/{{asaFileName}}
+      - asdm image disk0:/{{asdmFileName}}
+      - ssh timeout 1
+      - wr mem
+      #- reload noconfirm
+   #- name: reset connection
+     #meta: reset_connection
+   #- name: Wait for device to reload
+     #wait_for_connection:
+      #delay: 10
+   #- name: Verify ASA Image Applied
+     #asa_command:
+      #commands: 
+      #- config t
+      #- show version | grep asa
+      #wait_for:   
+      #- result[2] contains {{asaNewImage}}
+   #- name: Verify ASDM Image Applied
+     #asa_command:
+      #commands: 
+      #- sh run | grep asdm image
+      #wait_for: 
+      #- result[0] contains {{asdmNewImage}}
+     
+
