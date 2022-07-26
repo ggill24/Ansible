@@ -1,0 +1,48 @@
+---
+- hosts: all
+  gather_facts: false
+  connection: network_cli
+  become: yes
+  become_method: enable
+  timeout: 30
+
+  collections:
+    - cisco.asa
+
+  tasks:
+  - name: Timezone/Syslog Config
+    block:
+     - name: START
+       asa_command:
+        commands:
+         - config t
+         - NTP server "" source inside
+         - logging host inside ""
+    rescue:
+     - name: INSIDE NOT FOUND TRYING INSIDE_1
+       asa_command:
+        commands:
+         - NTP server "" source inside_1
+         - logging host inside_1 ""
+    always:
+     - name: Setting Summer Time / Configure Syslog
+       asa_command:
+        commands:
+         - clock summer-time SEST recurring 2 Sun Mar 02:00 first Sun Nov 02:00
+         - logging enable
+         - logging timestamp
+         - logging trap warning
+         - logging asdm informational
+         - logging device-id hostname
+         - logging rate-limit 30 1 level 1
+         - logging rate-limit 30 1 level 2
+         - logging rate-limit 30 1 level 3
+         - logging rate-limit 30 1 level 4
+         - logging rate-limit 100 30 level 5
+         - logging rate-limit 100 30 level 6
+         - logging rate-limit 100 30 level 7
+
+        
+        
+        
+    
